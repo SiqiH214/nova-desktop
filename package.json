@@ -1,0 +1,47 @@
+{
+  "name": "nova-desktop",
+  "version": "1.0.0",
+  "description": "Pika desktop app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac --arm64 --x64",
+    "build:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "ai.pika.nova",
+    "productName": "Pika",
+    "copyright": "Copyright © 2026 Pika",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "Pika",
+      "background": null,
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^34.5.8",
+    "electron-builder": "^25.1.8"
+  }
+}
