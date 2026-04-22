@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connection Error</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    height: 100vh;
+    background: #0a0a0a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    color: #fff;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+    opacity: 0.6;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: rgba(255,255,255,0.9);
+  }
+
+  .desc {
+    font-size: 14px;
+    color: rgba(255,255,255,0.45);
+    margin-bottom: 28px;
+    text-align: center;
+    max-width: 360px;
+    line-height: 1.5;
+  }
+
+  .retry-btn {
+    padding: 10px 28px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+  }
+  .retry-btn:hover {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.25);
+  }
+  .retry-btn:active {
+    transform: scale(0.97);
+  }
+
+  .retry-btn.loading {
+    pointer-events: none;
+    opacity: 0.5;
+  }
+
+  .error-code {
+    margin-top: 20px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.2);
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+  .loading .icon { animation: pulse 1.5s infinite; }
+</style>
+</head>
+<body>
+
+<div class="icon" id="icon">📡</div>
+<h1 id="title">Can't reach Pika</h1>
+<p class="desc" id="desc">Check your internet connection and try again.</p>
+<button class="retry-btn" id="retry-btn" onclick="retryLoad()">Try Again</button>
+<div class="error-code" id="error-code"></div>
+
+<script>
+  const params = new URLSearchParams(window.location.search)
+  const errorCode = params.get('code') || ''
+  const errorDesc = params.get('desc') || ''
+  const retryUrl = params.get('url') || 'https://pika.me/login'
+
+  if (errorCode) {
+    document.getElementById('error-code').textContent = `Error ${errorCode}: ${errorDesc}`
+  }
+
+  // DNS errors
+  if (errorCode === '-105' || errorCode === '-106') {
+    document.getElementById('title').textContent = 'No internet connection'
+    document.getElementById('desc').textContent = 'Connect to the internet and try again.'
+    document.getElementById('icon').textContent = '🌐'
+  }
+
+  // Timeout
+  if (errorCode === '-7' || errorCode === '-21') {
+    document.getElementById('title').textContent = 'Connection timed out'
+    document.getElementById('desc').textContent = 'Pika is taking too long to respond. Try again in a moment.'
+    document.getElementById('icon').textContent = '⏳'
+  }
+
+  // Auto-retry after 5 seconds
+  let autoRetryTimer = setTimeout(() => retryLoad(), 5000)
+
+  function retryLoad() {
+    clearTimeout(autoRetryTimer)
+    const btn = document.getElementById('retry-btn')
+    btn.textContent = 'Connecting…'
+    btn.classList.add('loading')
+    document.body.classList.add('loading')
+
+    // Use IPC if available, otherwise just navigate
+    if (window.pikaDesktop && window.pikaDesktop.retryLoad) {
+      window.pikaDesktop.retryLoad(retryUrl)
+    } else {
+      window.location.href = retryUrl
+    }
+  }
+</script>
+</body>
+</html>

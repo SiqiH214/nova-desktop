@@ -84,19 +84,15 @@
     color: #fff;
   }
 
-  /* Unread dot */
-  .session-btn .dot {
-    position: absolute;
-    top: 3px;
-    right: 3px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #7C3AED;
-    border: 1.5px solid #111;
-    display: none;
+  /* Drag state */
+  .session-btn.dragging {
+    opacity: 0.4;
+    transform: scale(0.9);
   }
-  .session-btn.unread .dot { display: block; }
+  .session-btn.drag-over {
+    border-color: rgba(124, 58, 237, 0.6);
+    background: rgba(124, 58, 237, 0.15);
+  }
 
   /* Close button on hover */
   .session-btn .close {
@@ -118,6 +114,25 @@
     z-index: 10;
   }
   .session-btn:hover .close { display: flex; }
+
+  /* Inline rename input */
+  .rename-input {
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
+    width: 120px;
+    padding: 4px 8px;
+    background: rgba(30,30,30,0.95);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+    z-index: 200;
+    backdrop-filter: blur(10px);
+  }
 
   .divider {
     width: 28px;
@@ -150,7 +165,7 @@
     background: rgba(255,255,255,0.05);
   }
 
-  /* Tooltip */
+  /* Tooltip — clamp to viewport */
   .session-btn::before {
     content: attr(data-name);
     position: absolute;
@@ -172,6 +187,30 @@
     border: 1px solid rgba(255,255,255,0.1);
   }
   .session-btn:hover::before { opacity: 1; }
+  .session-btn.renaming::before { opacity: 0 !important; }
+
+  /* Keyboard hint */
+  .session-btn::after {
+    content: attr(data-shortcut);
+    position: absolute;
+    left: calc(100% + 10px);
+    top: calc(50% + 16px);
+    transform: translateY(-50%);
+    background: rgba(0,0,0,0.6);
+    color: rgba(255,255,255,0.4);
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 100;
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+  .session-btn:hover::after { opacity: 1; }
+  .session-btn.renaming::after { opacity: 0 !important; }
 </style>
 </head>
 <body>
@@ -195,6 +234,7 @@
   } catch(e) {}
 
   let state = { sessions: [], activeId: null }
+  let draggedId = null
 
   function getInitials(name) {
     const parts = name.split(' ')
@@ -212,13 +252,22 @@
       btn.className = 'session-btn' + (s.id === state.activeId ? ' active' : '')
       btn.setAttribute('data-name', s.name)
       btn.setAttribute('data-id', s.id)
+      btn.setAttribute('data-shortcut', i < 9 ? `⌘${i + 1}` : '')
+      btn.setAttribute('draggable', 'true')
       btn.innerHTML = `
-        <span>${getInitials(s.name)}</span>
-        <span class="dot"></span>
+        <span class="label">${getInitials(s.name)}</span>
         ${state.sessions.length > 1 ? '<span class="close" data-close="'+s.id+'">×</span>' : ''}
       `
+
+      // Click → switch
       btn.addEventListener('click', () => window.sidebar.switchSession(s.id))
-      
+
+      // Double-click → rename
+      btn.addEventListener('dblclick', (e) => {
+        e.stopPropagation()
+        startRename(btn, s)
+      })
+
       // Close button
       const closeBtn = btn.querySelector('.close')
       if (closeBtn) {
@@ -227,9 +276,76 @@
           window.sidebar.closeSession(s.id)
         })
       }
-      
+
+      // Drag events
+      btn.addEventListener('dragstart', (e) => {
+        draggedId = s.id
+        btn.classList.add('dragging')
+        e.dataTransfer.effectAllowed = 'move'
+      })
+      btn.addEventListener('dragend', () => {
+        btn.classList.remove('dragging')
+        draggedId = null
+        document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'))
+      })
+      btn.addEventListener('dragover', (e) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (draggedId && draggedId !== s.id) {
+          btn.classList.add('drag-over')
+        }
+      })
+      btn.addEventListener('dragleave', () => {
+        btn.classList.remove('drag-over')
+      })
+      btn.addEventListener('drop', (e) => {
+        e.preventDefault()
+        btn.classList.remove('drag-over')
+        if (!draggedId || draggedId === s.id) return
+
+        // Reorder: move dragged before this one
+        const ids = state.sessions.map(x => x.id)
+        const fromIdx = ids.indexOf(draggedId)
+        const toIdx = ids.indexOf(s.id)
+        if (fromIdx === -1 || toIdx === -1) return
+
+        ids.splice(fromIdx, 1)
+        ids.splice(toIdx, 0, draggedId)
+        window.sidebar.reorderSessions(ids)
+      })
+
       list.appendChild(btn)
     })
+  }
+
+  function startRename(btn, session) {
+    // Don't show tooltip while renaming
+    btn.classList.add('renaming')
+
+    const input = document.createElement('input')
+    input.className = 'rename-input'
+    input.value = session.name
+    input.maxLength = 30
+    btn.appendChild(input)
+    input.focus()
+    input.select()
+
+    function finish() {
+      const newName = input.value.trim()
+      if (newName && newName !== session.name) {
+        window.sidebar.renameSession(session.id, newName)
+      }
+      btn.classList.remove('renaming')
+      input.remove()
+    }
+
+    input.addEventListener('blur', finish)
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { input.blur() }
+      if (e.key === 'Escape') { input.value = session.name; input.blur() }
+      e.stopPropagation()
+    })
+    input.addEventListener('click', (e) => e.stopPropagation())
   }
 
   document.getElementById('add-btn').addEventListener('click', () => {

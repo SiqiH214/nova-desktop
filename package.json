@@ -21,7 +21,10 @@
       "target": [
         {
           "target": "zip",
-          "arch": ["arm64", "x64"]
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "darkModeSupport": true
@@ -38,5 +41,8 @@
   "devDependencies": {
     "electron": "^34.0.0",
     "electron-builder": "^25.0.0"
+  },
+  "dependencies": {
+    "electron-store": "^11.0.2"
   }
 }
