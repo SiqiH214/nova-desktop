@@ -1,55 +1,87 @@
-const { app, BrowserWindow, shell, Menu, nativeTheme, ipcMain, Tray } = require('electron')
+const { app, BaseWindow, WebContentsView, shell, Menu, nativeTheme, ipcMain, Tray, screen } = require('electron')
 const path = require('path')
+const fs = require('fs')
 
 const PIKA_URL = 'https://pika.me'
 const START_URL = 'https://pika.me/login'
+const SIDEBAR_WIDTH = 72
+const TITLEBAR_HEIGHT = 38
 
-let mainWindow
+let win
 let tray
 let isQuitting = false
+let sessions = []
+let activeSessionId = null
+let sidebarView = null
 
-function createWindow() {
-  nativeTheme.themeSource = 'dark'
+const sessionsFile = path.join(app.getPath('userData'), 'sessions.json')
 
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 800,
-    minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 16 },
-    backgroundColor: '#0a0a0a',
+function loadPersistedSessions() {
+  try {
+    if (fs.existsSync(sessionsFile)) {
+      return JSON.parse(fs.readFileSync(sessionsFile, 'utf8'))
+    }
+  } catch (e) {}
+  return [{ id: '1', name: 'Chat 1', url: START_URL }]
+}
+
+function persistSessions() {
+  const data = sessions.map(s => ({
+    id: s.id,
+    name: s.name,
+    url: s.view?.webContents?.getURL() || START_URL
+  }))
+  fs.writeFileSync(sessionsFile, JSON.stringify(data, null, 2))
+}
+
+function getWindowSize() {
+  return win ? win.getSize() : [1280, 860]
+}
+
+function layoutViews() {
+  const [w, h] = getWindowSize()
+  if (sidebarView) {
+    sidebarView.setBounds({ x: 0, y: 0, width: SIDEBAR_WIDTH, height: h })
+  }
+  for (const session of sessions) {
+    if (session.view) {
+      const isActive = session.id === activeSessionId
+      session.view.setVisible(isActive)
+      if (isActive) {
+        session.view.setBounds({
+          x: SIDEBAR_WIDTH,
+          y: TITLEBAR_HEIGHT,
+          width: w - SIDEBAR_WIDTH,
+          height: h - TITLEBAR_HEIGHT
+        })
+      }
+    }
+  }
+}
+
+function notifySidebar() {
+  if (sidebarView?.webContents && !sidebarView.webContents.isDestroyed()) {
+    sidebarView.webContents.send('sessions-update', {
+      sessions: sessions.map(s => ({ id: s.id, name: s.name })),
+      activeId: activeSessionId
+    })
+  }
+}
+
+function createSessionView(id, name, url) {
+  const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
-    },
-    icon: path.join(__dirname, 'build', 'icon.icns'),
-    show: false,
+    }
   })
 
-  // Load login page directly (skip landing)
-  mainWindow.loadURL(START_URL)
+  win.contentView.addChildView(view)
+  view.webContents.loadURL(url || START_URL)
+  view.setVisible(false)
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show()
-    // Focus window on launch
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
-  })
-
-  // Handle failed loads
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.error('Failed to load:', errorCode, errorDescription)
-    // Retry after 3 seconds
-    setTimeout(() => {
-      mainWindow.loadURL(START_URL)
-    }, 3000)
-  })
-
-  // Open external links in default browser
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  view.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith(PIKA_URL)) {
       shell.openExternal(url)
       return { action: 'deny' }
@@ -57,75 +89,156 @@ function createWindow() {
     return { action: 'allow' }
   })
 
-  // Handle external navigation
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(PIKA_URL)) {
+  view.webContents.on('will-navigate', (event, navUrl) => {
+    if (!navUrl.startsWith(PIKA_URL)) {
       event.preventDefault()
-      shell.openExternal(url)
+      shell.openExternal(navUrl)
     }
   })
 
-  mainWindow.on('close', (event) => {
+  view.webContents.on('did-fail-load', () => {
+    setTimeout(() => {
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.loadURL(url || START_URL)
+      }
+    }, 3000)
+  })
+
+  const session = { id, name, view, url }
+  sessions.push(session)
+  return session
+}
+
+function switchToSession(id) {
+  activeSessionId = id
+  layoutViews()
+  notifySidebar()
+}
+
+function createWindow() {
+  nativeTheme.themeSource = 'dark'
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+  const winWidth = Math.min(1280, width)
+  const winHeight = Math.min(860, height)
+
+  win = new BaseWindow({
+    width: winWidth,
+    height: winHeight,
+    minWidth: 800,
+    minHeight: 600,
+    backgroundColor: '#0a0a0a',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 20 },
+    icon: path.join(__dirname, 'build', 'icon.icns'),
+    show: false,
+  })
+
+  // Sidebar
+  sidebarView = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-sidebar.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    }
+  })
+  win.contentView.addChildView(sidebarView)
+  sidebarView.webContents.loadFile(path.join(__dirname, 'renderer', 'sidebar.html'))
+  sidebarView.webContents.once('did-finish-load', () => {
+    win.show()
+    notifySidebar()
+  })
+
+  // Load persisted sessions
+  const saved = loadPersistedSessions()
+  for (const s of saved) {
+    createSessionView(s.id, s.name, s.url)
+  }
+  if (sessions.length > 0) {
+    switchToSession(sessions[0].id)
+  }
+
+  layoutViews()
+
+  win.on('resize', layoutViews)
+  win.on('maximize', layoutViews)
+  win.on('unmaximize', layoutViews)
+
+  win.on('close', (e) => {
     if (!isQuitting && process.platform === 'darwin') {
-      event.preventDefault()
-      mainWindow.hide()
+      e.preventDefault()
+      win.hide()
     }
-  })
-
-  mainWindow.on('closed', () => {
-    mainWindow = null
   })
 }
+
+// IPC
+ipcMain.handle('get-sessions', () => ({
+  sessions: sessions.map(s => ({ id: s.id, name: s.name })),
+  activeId: activeSessionId
+}))
+
+ipcMain.on('switch-session', (_, id) => {
+  switchToSession(id)
+})
+
+ipcMain.on('new-session', () => {
+  const id = Date.now().toString()
+  const name = `Chat ${sessions.length + 1}`
+  createSessionView(id, name, START_URL)
+  switchToSession(id)
+  layoutViews()
+  notifySidebar()
+  persistSessions()
+})
+
+ipcMain.on('close-session', (_, id) => {
+  if (sessions.length <= 1) return
+  const idx = sessions.findIndex(s => s.id === id)
+  if (idx === -1) return
+  const session = sessions[idx]
+  win.contentView.removeChildView(session.view)
+  session.view.webContents.destroy()
+  sessions.splice(idx, 1)
+  if (activeSessionId === id) {
+    switchToSession(sessions[Math.max(0, idx - 1)].id)
+  }
+  notifySidebar()
+  persistSessions()
+})
+
+ipcMain.on('rename-session', (_, { id, name }) => {
+  const session = sessions.find(s => s.id === id)
+  if (session) {
+    session.name = name
+    notifySidebar()
+    persistSessions()
+  }
+})
 
 function createTray() {
-  // Use a simple emoji-based tray icon (macOS supports this)
-  // In production, you'd use a proper icon file
   tray = new Tray(path.join(__dirname, 'build', 'icon.png'))
-  
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Open Pika', click: () => {
-      if (mainWindow) {
-        mainWindow.show()
-        mainWindow.focus()
-      } else {
-        createWindow()
-      }
-    }},
-    { type: 'separator' },
-    { label: 'Quit', click: () => {
-      isQuitting = true
-      app.quit()
-    }}
-  ])
-  
   tray.setToolTip('Pika')
-  tray.setContextMenu(contextMenu)
-  
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Pika', click: () => { win?.show(); win?.focus() } },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { isQuitting = true; app.quit() } }
+  ]))
   tray.on('click', () => {
-    if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.hide()
-      } else {
-        mainWindow.show()
-        mainWindow.focus()
-      }
-    } else {
-      createWindow()
-    }
+    if (win) win.isVisible() ? win.hide() : (win.show(), win.focus())
   })
 }
 
-// Native Mac menu
 function buildMenu() {
-  const template = [
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: app.name,
       submenu: [
         { role: 'about' },
         { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
+        { label: 'New Session', accelerator: 'CmdOrCtrl+T', click: () => ipcMain.emit('new-session') },
+        { type: 'separator' },
+        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
         { type: 'separator' },
         { role: 'quit' }
       ]
@@ -133,77 +246,36 @@ function buildMenu() {
     {
       label: 'Edit',
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' }
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }
       ]
     },
     {
       label: 'View',
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => {
+          const s = sessions.find(x => x.id === activeSessionId)
+          s?.view?.webContents?.reload()
+        }},
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
     },
     {
       label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        { type: 'separator' },
-        { role: 'front' }
-      ]
+      submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }]
     }
-  ]
-
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  ]))
 }
 
 app.whenReady().then(() => {
   buildMenu()
   createWindow()
   createTray()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
-    } else {
-      mainWindow?.show()
-    }
-  })
+  app.on('activate', () => { win?.show(); win?.focus() })
 })
 
-app.on('window-all-closed', () => {
-  // On macOS, keep app running even when all windows closed
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
-
-app.on('before-quit', () => {
-  isQuitting = true
-})
-
-// Handle deep links (pika://)
-app.on('open-url', (event, url) => {
-  event.preventDefault()
-  if (url.startsWith('pika://')) {
-    if (mainWindow) {
-      mainWindow.show()
-      mainWindow.focus()
-      // Navigate to the deep link path
-      const path = url.replace('pika://', '')
-      mainWindow.loadURL(`${PIKA_URL}/${path}`)
-    }
-  }
-})
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+app.on('before-quit', () => { isQuitting = true; persistSessions() })

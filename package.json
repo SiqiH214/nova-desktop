@@ -29,7 +29,10 @@
     "files": [
       "main.js",
       "preload.js",
-      "build/icon.icns"
+      "preload-sidebar.js",
+      "renderer/**",
+      "build/icon.icns",
+      "build/icon.png"
     ]
   },
   "devDependencies": {
