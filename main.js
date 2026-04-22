@@ -2,6 +2,7 @@ const { app, BrowserWindow, shell, Menu, nativeTheme, ipcMain, Tray } = require(
 const path = require('path')
 
 const PIKA_URL = 'https://pika.me'
+const START_URL = 'https://pika.me/login'
 
 let mainWindow
 let tray
@@ -28,8 +29,8 @@ function createWindow() {
     show: false,
   })
 
-  // Loading state
-  mainWindow.loadURL(PIKA_URL)
+  // Load login page directly (skip landing)
+  mainWindow.loadURL(START_URL)
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
@@ -43,7 +44,7 @@ function createWindow() {
     console.error('Failed to load:', errorCode, errorDescription)
     // Retry after 3 seconds
     setTimeout(() => {
-      mainWindow.loadURL(PIKA_URL)
+      mainWindow.loadURL(START_URL)
     }, 3000)
   })
 
