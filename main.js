@@ -1,16 +1,18 @@
-const { app, BrowserWindow, shell, Menu, nativeTheme, session } = require('electron')
+const { app, BrowserWindow, shell, Menu, nativeTheme, ipcMain, Tray } = require('electron')
 const path = require('path')
 
 const PIKA_URL = 'https://pika.me'
 
 let mainWindow
+let tray
+let isQuitting = false
 
 function createWindow() {
   nativeTheme.themeSource = 'dark'
 
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: 1280,
+    height: 860,
     minWidth: 800,
     minHeight: 600,
     titleBarStyle: 'hiddenInset',
@@ -26,13 +28,26 @@ function createWindow() {
     show: false,
   })
 
+  // Loading state
   mainWindow.loadURL(PIKA_URL)
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
+    // Focus window on launch
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
   })
 
-  // Open external links in the default browser
+  // Handle failed loads
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('Failed to load:', errorCode, errorDescription)
+    // Retry after 3 seconds
+    setTimeout(() => {
+      mainWindow.loadURL(PIKA_URL)
+    }, 3000)
+  })
+
+  // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith(PIKA_URL)) {
       shell.openExternal(url)
@@ -41,8 +56,61 @@ function createWindow() {
     return { action: 'allow' }
   })
 
+  // Handle external navigation
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(PIKA_URL)) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+
+  mainWindow.on('close', (event) => {
+    if (!isQuitting && process.platform === 'darwin') {
+      event.preventDefault()
+      mainWindow.hide()
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+}
+
+function createTray() {
+  // Use a simple emoji-based tray icon (macOS supports this)
+  // In production, you'd use a proper icon file
+  tray = new Tray(path.join(__dirname, 'build', 'icon.png'))
+  
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Open Pika', click: () => {
+      if (mainWindow) {
+        mainWindow.show()
+        mainWindow.focus()
+      } else {
+        createWindow()
+      }
+    }},
+    { type: 'separator' },
+    { label: 'Quit', click: () => {
+      isQuitting = true
+      app.quit()
+    }}
+  ])
+  
+  tray.setToolTip('Pika')
+  tray.setContextMenu(contextMenu)
+  
+  tray.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide()
+      } else {
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    } else {
+      createWindow()
+    }
   })
 }
 
@@ -103,16 +171,38 @@ function buildMenu() {
 app.whenReady().then(() => {
   buildMenu()
   createWindow()
+  createTray()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
+    } else {
+      mainWindow?.show()
     }
   })
 })
 
 app.on('window-all-closed', () => {
+  // On macOS, keep app running even when all windows closed
   if (process.platform !== 'darwin') {
     app.quit()
+  }
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
+})
+
+// Handle deep links (pika://)
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (url.startsWith('pika://')) {
+    if (mainWindow) {
+      mainWindow.show()
+      mainWindow.focus()
+      // Navigate to the deep link path
+      const path = url.replace('pika://', '')
+      mainWindow.loadURL(`${PIKA_URL}/${path}`)
+    }
   }
 })

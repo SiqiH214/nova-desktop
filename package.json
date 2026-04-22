@@ -1,7 +1,7 @@
 {
   "name": "nova-desktop",
   "version": "1.0.0",
-  "description": "Pika desktop app",
+  "description": "Pika desktop app — native macOS wrapper for pika.me",
   "main": "main.js",
   "author": "Pika <hi@pika.me>",
   "scripts": {
@@ -25,13 +25,6 @@
         }
       ],
       "darkModeSupport": true
-    },
-    "dmg": {
-      "title": "Pika",
-      "window": {
-        "width": 540,
-        "height": 380
-      }
     },
     "files": [
       "main.js",
